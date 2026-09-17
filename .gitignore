@@ -1,0 +1,10 @@
+# Worktrees
+.worktrees/
+
+# Binaries
+bin/
+*.exe
+*.test
+
+# OS Files
+.DS_Store
