@@ -67,6 +67,13 @@ func (s *server) Chat(stream pb.GreetingService_ChatServer) error {
 
 	for {
 		// 1. 持續監聽並接收用戶端發來的訊息
+		// ⚠️ 重要觀念：stream.Recv() 是一個「同步阻塞式呼叫 (Blocking Call)」！
+		// 當 Client 尚未傳送下一筆訊息時，當前 Goroutine 會在此行「原地阻塞暫停等待」，
+		// 絕不會跳過去執行下方的 log 或處理邏輯。
+		// 只有在以下三種情況之一發生時，Recv() 才會解除阻塞並返回：
+		//   ① Client 傳來新資料 -> 回傳 in != nil, err == nil（解除阻塞，往下處理）
+		//   ② Client 呼叫 CloseSend() -> 回傳 in == nil, err == io.EOF（解除阻塞，優雅結束）
+		//   ③ 網路異常或逾時中斷 -> 回傳 err != nil（解除阻塞，報錯退出）
 		in, err := stream.Recv()
 		if err == io.EOF {
 			// io.EOF 表示用戶端已關閉發送串流 (用戶端發送完成)
@@ -78,7 +85,7 @@ func (s *server) Chat(stream pb.GreetingService_ChatServer) error {
 			return err
 		}
 
-		// 2. 處理收到的訊息
+		// 2. 處理收到的訊息 (能執行到這裡，代表上一行的 Recv() 剛收到訊息並解除了阻塞)
 		log.Printf("📥 [Service B Stream] 收到來自 [%s] 的串流訊息: 「%s」", in.GetSender(), in.GetMessage())
 
 		// 3. 組織伺服端的回應訊息並即時回推給用戶端

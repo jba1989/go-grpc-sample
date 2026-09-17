@@ -33,6 +33,10 @@ func main() {
 	}()
 
 	// 步驟 2: 建立客戶端存根 (Stub)
+	// 💡【核心觀念：什麼是 Stub？】
+	// client 是由 Proto 自動生成的「服務存根 (Stub)」，就像是本地的「服務總機/代理人」。
+	// 它的生命週期很長（通常與連線共存），封裝了 Proto 裡定義的所有 API 方法。
+	// 不管是單向呼叫還是雙向串流，第一步都必須透過 Stub！
 	client := pb.NewGreetingServiceClient(conn)
 
 	// =========================================================================
@@ -46,6 +50,8 @@ func main() {
 		Name:    "Service A (用戶端)",
 		Message: "你好 Service B，這是單向 Hello 測試！",
 	}
+	// 在單向 RPC 中，因為只有「一發一收」，gRPC 在底層自動幫你建立並關閉短暫的 stream，
+	// 開發者直接透過 Stub 傳入 Request 並拿到 Response，感受不到 stream 的存在。
 	resp, err := client.SayHello(ctxUnary, req)
 	if err != nil {
 		log.Fatalf("❌ Unary RPC 呼叫失敗: %v", err)
@@ -58,7 +64,11 @@ func main() {
 	log.Println("\n--- 【展示二：雙向串流 RPC (Bidirectional Streaming)】---")
 	log.Println("💡 雙向串流特點：Client 與 Server 可以在同一個 HTTP/2 連線上，同時、非同步地相互收發訊息！")
 
-	// 步驟 1: 建立雙向串流通道
+	// 步驟 1: 透過 Stub 建立雙向串流通道 (Stream)
+	// 💡【核心觀念：Stub 與 Stream 是不同的東西！】
+	// - Stub 是「總機」；而 stream 是撥通後回傳的「專屬雙向通話語音線路」。
+	// - 只要需要持續、多次收發，Stub 就會建立一個 stream 物件給我們。
+	// - 後續所有收發 (stream.Send / stream.Recv) 都由這個專屬的 stream 負責！
 	stream, err := client.Chat(context.Background())
 	if err != nil {
 		log.Fatalf("❌ 無法開啟雙向串流通道: %v", err)
