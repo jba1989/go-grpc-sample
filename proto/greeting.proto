@@ -11,17 +11,28 @@ option go_package = "grpc-sample/proto/pb;pb";
 // 定義 gRPC 服務 (Service)
 // 服務代表兩端系統之間可以互相呼叫的 API 介面
 service GreetingService {
-  // 定義一個單向 RPC (Unary RPC) 方法：
-  // 用戶端 (Service A) 發送一個 HelloRequest 請求，
-  // 服務端 (Service B) 處理後回傳一個 HelloResponse 回應。
+  // 1. 單向 RPC (Unary RPC)：
+  // 用戶端 (Service A) 發送一次請求，服務端 (Service B) 回傳一次回應（傳統 Request-Response 模式）
   rpc SayHello (HelloRequest) returns (HelloResponse);
+
+  // 2. 雙向串流 RPC (Bidirectional Streaming RPC)：
+  // 關鍵字「stream」同時出現在請求與回應參數中：
+  // 代表 Client 與 Server 可以在同一個長連線上，非同步、互相獨立地發送多筆訊息！
+  //
+  // 💡 實際應用場景：
+  // - 即時多人聊天室 / 協同編輯 (如 Google Docs、Figma 即時光標與輸入同步)
+  // - 語音 AI / 語音串流全雙工對話 (如邊錄音邊串流傳送音訊，AI 邊辨識邊即時回傳文字或合成語音)
+  // - 物聯網 (IoT) 即時遙測與反向控制 (邊緣設備持續上報感測器數據，伺服器隨時下發控制指令)
+  // - 金融即時高頻撮合交易 (一端即時訂閱報價深度，另一端隨時發送下單與撤單指令)
+  rpc Chat (stream ChatMessage) returns (stream ChatMessage);
 }
+
+// ==========================================
+// 單向 RPC 訊息結構
+// ==========================================
 
 // 定義請求訊息格式 (Message)
 message HelloRequest {
-  // 欄位定義格式：<資料型態> <欄位名稱> = <欄位編號>;
-  // 注意：數字 1 是「欄位標籤編號」(Field Tag Number)，
-  // 在二進位序列化時用來標識欄位，而不是代表預設值或順序。
   string name = 1;      // 用戶端傳入的問候名稱
   string message = 2;   // 用戶端傳入的自訂問候文字
 }
@@ -30,4 +41,15 @@ message HelloRequest {
 message HelloResponse {
   string reply = 1;     // 服務端回傳的問候回應文字
   int64 timestamp = 2;  // 服務端處理完成時的 Unix 時間戳記 (秒)
+}
+
+// ==========================================
+// 雙向串流 RPC 訊息結構
+// ==========================================
+
+// 聊天與雙向資料傳輸訊息
+message ChatMessage {
+  string sender = 1;     // 訊息發送者名稱 (例如 "Service A" 或 "Service B")
+  string message = 2;    // 發送的文字內容
+  int64 timestamp = 3;   // 發送時間戳記 (Unix 秒)
 }
