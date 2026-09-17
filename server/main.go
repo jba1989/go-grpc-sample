@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"time"
@@ -24,34 +25,77 @@ type server struct {
 	pb.UnimplementedGreetingServiceServer
 }
 
-// SayHello 是我們在 proto 檔案中定義的 RPC 方法在 Go 端的具體實作
-//
-// 參數說明：
-//   - ctx: 呼叫上下文 (Context)，可用於處理逾時控制、取消訊號或傳遞 Metadata
-//   - req: 由 Service A (Client) 傳遞過來的請求物件指標 (*pb.HelloRequest)
-//
-// 回傳說明：
-//   - *pb.HelloResponse: 欲回傳給 Service A 的回應物件指標
-//   - error: 若處理過程發生錯誤則回傳 error，成功時回傳 nil
+// -------------------------------------------------------------
+// 1. 單向 RPC (Unary RPC) 實作
+// -------------------------------------------------------------
+
+// SayHello 是單向 RPC 方法：接收單一請求，回傳單一回應
 func (s *server) SayHello(ctx context.Context, req *pb.HelloRequest) (*pb.HelloResponse, error) {
-	// 1. 從請求物件中讀取資料 (建議使用 Getter 方法如 GetName()，具備 nil 防禦保護)
 	clientName := req.GetName()
 	clientMsg := req.GetMessage()
 
-	log.Printf("📥 [Service B] 收到請求 -> 來源名稱: [%s], 附加訊息: [%s]", clientName, clientMsg)
+	log.Printf("📥 [Service B Unary] 收到請求 -> 來源: [%s], 訊息: [%s]", clientName, clientMsg)
 
-	// 2. 組織回應文字與當前處理的時間戳記
 	replyText := fmt.Sprintf("你好 %s！我是 Service B，我已經收到你的訊息：「%s」", clientName, clientMsg)
 	currentTime := time.Now().Unix()
 
-	// 3. 建立並回傳 Proto 產生的 Response 結構體
 	resp := &pb.HelloResponse{
 		Reply:     replyText,
 		Timestamp: currentTime,
 	}
 
-	log.Printf("📤 [Service B] 回傳回應 -> 回應內容: [%s]", replyText)
+	log.Printf("📤 [Service B Unary] 回傳回應 -> [%s]", replyText)
 	return resp, nil
+}
+
+// -------------------------------------------------------------
+// 2. 雙向串流 RPC (Bidirectional Streaming RPC) 實作
+// -------------------------------------------------------------
+
+// Chat 實作雙向串流邏輯
+//
+// 參數說明：
+//   - stream: 雙向串流管道 (pb.GreetingService_ChatServer)，
+//     同時具備 stream.Recv() 與 stream.Send() 能力。
+//
+// 運作機制：
+//   1. 服務端透過一個無限迴圈持續呼叫 stream.Recv() 讀取用戶端發過來的訊息。
+//   2. 當用戶端呼叫 stream.CloseSend() 關閉發送時，Recv() 會收到 io.EOF 錯誤，代表用戶端訊息已傳送完畢。
+//   3. 在此期間，服務端可隨時、多次透過 stream.Send() 向用戶端發送回覆，彼此收發完全獨立且非同步！
+func (s *server) Chat(stream pb.GreetingService_ChatServer) error {
+	log.Println("🔄 [Service B Stream] 雙向串流通道已建立，準備接收訊息...")
+
+	for {
+		// 1. 持續監聽並接收用戶端發來的訊息
+		in, err := stream.Recv()
+		if err == io.EOF {
+			// io.EOF 表示用戶端已關閉發送串流 (用戶端發送完成)
+			log.Println("👋 [Service B Stream] 用戶端已結束傳輸 (收到 io.EOF)，關閉本次串流連線。")
+			return nil
+		}
+		if err != nil {
+			log.Printf("❌ [Service B Stream] 讀取串流訊息失敗: %v", err)
+			return err
+		}
+
+		// 2. 處理收到的訊息
+		log.Printf("📥 [Service B Stream] 收到來自 [%s] 的串流訊息: 「%s」", in.GetSender(), in.GetMessage())
+
+		// 3. 組織伺服端的回應訊息並即時回推給用戶端
+		replyMsg := fmt.Sprintf("Service B 已收到你的第 %s 號訊號！", in.GetMessage())
+		resp := &pb.ChatMessage{
+			Sender:    "Service B (服務端)",
+			Message:   replyMsg,
+			Timestamp: time.Now().Unix(),
+		}
+
+		// 透過同一個 stream 即時回傳
+		if err := stream.Send(resp); err != nil {
+			log.Printf("❌ [Service B Stream] 回傳串流訊息失敗: %v", err)
+			return err
+		}
+		log.Printf("📤 [Service B Stream] 已即時回推回應給用戶端: [%s]", replyMsg)
+	}
 }
 
 func main() {
@@ -64,11 +108,10 @@ func main() {
 	}
 
 	// 步驟 2: 建立 gRPC 伺服器實例
-	// 這裡可以透過 grpc.NewServer(opts...) 傳入攔截器 (Interceptor)、TLS 設定等選項
 	grpcServer := grpc.NewServer()
 
 	// 步驟 3: 將我們實作的業務邏輯 (&server{}) 註冊到 gRPC 伺服器中
-	// 這一步會將 Proto 定義的方法路由綁定至該實體
+	// 這一步會同時註冊 SayHello (單向) 與 Chat (雙向串流) 兩個方法
 	pb.RegisterGreetingServiceServer(grpcServer, &server{})
 
 	log.Printf("✅ [Service B] gRPC 伺服器已成功啟動，正在監聽 %s", port)
