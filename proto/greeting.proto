@@ -1,0 +1,33 @@
+// 指定使用 Protocol Buffers 第 3 版語法 (proto3)
+syntax = "proto3";
+
+// 定義 Protobuf 的命名空間 (Package)，防止不同 proto 檔之間的名稱衝突
+package greeting;
+
+// 指定產生的 Go 程式碼所屬的 Package 路徑與名稱
+// 格式為: "<模組名稱>/<輸出目錄>;<套件名稱>"
+option go_package = "grpc-sample/proto/pb;pb";
+
+// 定義 gRPC 服務 (Service)
+// 服務代表兩端系統之間可以互相呼叫的 API 介面
+service GreetingService {
+  // 定義一個單向 RPC (Unary RPC) 方法：
+  // 用戶端 (Service A) 發送一個 HelloRequest 請求，
+  // 服務端 (Service B) 處理後回傳一個 HelloResponse 回應。
+  rpc SayHello (HelloRequest) returns (HelloResponse);
+}
+
+// 定義請求訊息格式 (Message)
+message HelloRequest {
+  // 欄位定義格式：<資料型態> <欄位名稱> = <欄位編號>;
+  // 注意：數字 1 是「欄位標籤編號」(Field Tag Number)，
+  // 在二進位序列化時用來標識欄位，而不是代表預設值或順序。
+  string name = 1;      // 用戶端傳入的問候名稱
+  string message = 2;   // 用戶端傳入的自訂問候文字
+}
+
+// 定義回應訊息格式 (Message)
+message HelloResponse {
+  string reply = 1;     // 服務端回傳的問候回應文字
+  int64 timestamp = 2;  // 服務端處理完成時的 Unix 時間戳記 (秒)
+}
