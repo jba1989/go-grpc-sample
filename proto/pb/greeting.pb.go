@@ -27,12 +27,9 @@ const (
 
 // 定義請求訊息格式 (Message)
 type HelloRequest struct {
-	state protoimpl.MessageState `protogen:"open.v1"`
-	// 欄位定義格式：<資料型態> <欄位名稱> = <欄位編號>;
-	// 注意：數字 1 是「欄位標籤編號」(Field Tag Number)，
-	// 在二進位序列化時用來標識欄位，而不是代表預設值或順序。
-	Name          string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // 用戶端傳入的問候名稱
-	Message       string `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // 用戶端傳入的自訂問候文字
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Name          string                 `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`       // 用戶端傳入的問候名稱
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"` // 用戶端傳入的自訂問候文字
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -134,6 +131,67 @@ func (x *HelloResponse) GetTimestamp() int64 {
 	return 0
 }
 
+// 聊天與雙向資料傳輸訊息
+type ChatMessage struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Sender        string                 `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`        // 訊息發送者名稱 (例如 "Service A" 或 "Service B")
+	Message       string                 `protobuf:"bytes,2,opt,name=message,proto3" json:"message,omitempty"`      // 發送的文字內容
+	Timestamp     int64                  `protobuf:"varint,3,opt,name=timestamp,proto3" json:"timestamp,omitempty"` // 發送時間戳記 (Unix 秒)
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ChatMessage) Reset() {
+	*x = ChatMessage{}
+	mi := &file_proto_greeting_proto_msgTypes[2]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ChatMessage) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ChatMessage) ProtoMessage() {}
+
+func (x *ChatMessage) ProtoReflect() protoreflect.Message {
+	mi := &file_proto_greeting_proto_msgTypes[2]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ChatMessage.ProtoReflect.Descriptor instead.
+func (*ChatMessage) Descriptor() ([]byte, []int) {
+	return file_proto_greeting_proto_rawDescGZIP(), []int{2}
+}
+
+func (x *ChatMessage) GetSender() string {
+	if x != nil {
+		return x.Sender
+	}
+	return ""
+}
+
+func (x *ChatMessage) GetMessage() string {
+	if x != nil {
+		return x.Message
+	}
+	return ""
+}
+
+func (x *ChatMessage) GetTimestamp() int64 {
+	if x != nil {
+		return x.Timestamp
+	}
+	return 0
+}
+
 var File_proto_greeting_proto protoreflect.FileDescriptor
 
 const file_proto_greeting_proto_rawDesc = "" +
@@ -144,9 +202,14 @@ const file_proto_greeting_proto_rawDesc = "" +
 	"\amessage\x18\x02 \x01(\tR\amessage\"C\n" +
 	"\rHelloResponse\x12\x14\n" +
 	"\x05reply\x18\x01 \x01(\tR\x05reply\x12\x1c\n" +
-	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp2N\n" +
+	"\ttimestamp\x18\x02 \x01(\x03R\ttimestamp\"]\n" +
+	"\vChatMessage\x12\x16\n" +
+	"\x06sender\x18\x01 \x01(\tR\x06sender\x12\x18\n" +
+	"\amessage\x18\x02 \x01(\tR\amessage\x12\x1c\n" +
+	"\ttimestamp\x18\x03 \x01(\x03R\ttimestamp2\x88\x01\n" +
 	"\x0fGreetingService\x12;\n" +
-	"\bSayHello\x12\x16.greeting.HelloRequest\x1a\x17.greeting.HelloResponseB\x19Z\x17grpc-sample/proto/pb;pbb\x06proto3"
+	"\bSayHello\x12\x16.greeting.HelloRequest\x1a\x17.greeting.HelloResponse\x128\n" +
+	"\x04Chat\x12\x15.greeting.ChatMessage\x1a\x15.greeting.ChatMessage(\x010\x01B\x19Z\x17grpc-sample/proto/pb;pbb\x06proto3"
 
 var (
 	file_proto_greeting_proto_rawDescOnce sync.Once
@@ -160,16 +223,19 @@ func file_proto_greeting_proto_rawDescGZIP() []byte {
 	return file_proto_greeting_proto_rawDescData
 }
 
-var file_proto_greeting_proto_msgTypes = make([]protoimpl.MessageInfo, 2)
+var file_proto_greeting_proto_msgTypes = make([]protoimpl.MessageInfo, 3)
 var file_proto_greeting_proto_goTypes = []any{
 	(*HelloRequest)(nil),  // 0: greeting.HelloRequest
 	(*HelloResponse)(nil), // 1: greeting.HelloResponse
+	(*ChatMessage)(nil),   // 2: greeting.ChatMessage
 }
 var file_proto_greeting_proto_depIdxs = []int32{
 	0, // 0: greeting.GreetingService.SayHello:input_type -> greeting.HelloRequest
-	1, // 1: greeting.GreetingService.SayHello:output_type -> greeting.HelloResponse
-	1, // [1:2] is the sub-list for method output_type
-	0, // [0:1] is the sub-list for method input_type
+	2, // 1: greeting.GreetingService.Chat:input_type -> greeting.ChatMessage
+	1, // 2: greeting.GreetingService.SayHello:output_type -> greeting.HelloResponse
+	2, // 3: greeting.GreetingService.Chat:output_type -> greeting.ChatMessage
+	2, // [2:4] is the sub-list for method output_type
+	0, // [0:2] is the sub-list for method input_type
 	0, // [0:0] is the sub-list for extension type_name
 	0, // [0:0] is the sub-list for extension extendee
 	0, // [0:0] is the sub-list for field type_name
@@ -186,7 +252,7 @@ func file_proto_greeting_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proto_greeting_proto_rawDesc), len(file_proto_greeting_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   2,
+			NumMessages:   3,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

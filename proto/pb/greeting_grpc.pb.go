@@ -24,6 +24,7 @@ const _ = grpc.SupportPackageIsVersion9
 
 const (
 	GreetingService_SayHello_FullMethodName = "/greeting.GreetingService/SayHello"
+	GreetingService_Chat_FullMethodName     = "/greeting.GreetingService/Chat"
 )
 
 // GreetingServiceClient is the client API for GreetingService service.
@@ -33,10 +34,19 @@ const (
 // 定義 gRPC 服務 (Service)
 // 服務代表兩端系統之間可以互相呼叫的 API 介面
 type GreetingServiceClient interface {
-	// 定義一個單向 RPC (Unary RPC) 方法：
-	// 用戶端 (Service A) 發送一個 HelloRequest 請求，
-	// 服務端 (Service B) 處理後回傳一個 HelloResponse 回應。
+	// 1. 單向 RPC (Unary RPC)：
+	// 用戶端 (Service A) 發送一次請求，服務端 (Service B) 回傳一次回應（傳統 Request-Response 模式）
 	SayHello(ctx context.Context, in *HelloRequest, opts ...grpc.CallOption) (*HelloResponse, error)
+	// 2. 雙向串流 RPC (Bidirectional Streaming RPC)：
+	// 關鍵字「stream」同時出現在請求與回應參數中：
+	// 代表 Client 與 Server 可以在同一個長連線上，非同步、互相獨立地發送多筆訊息！
+	//
+	// 💡 實際應用場景：
+	// - 即時多人聊天室 / 協同編輯 (如 Google Docs、Figma 即時光標與輸入同步)
+	// - 語音 AI / 語音串流全雙工對話 (如邊錄音邊串流傳送音訊，AI 邊辨識邊即時回傳文字或合成語音)
+	// - 物聯網 (IoT) 即時遙測與反向控制 (邊緣設備持續上報感測器數據，伺服器隨時下發控制指令)
+	// - 金融即時高頻撮合交易 (一端即時訂閱報價深度，另一端隨時發送下單與撤單指令)
+	Chat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ChatMessage, ChatMessage], error)
 }
 
 type greetingServiceClient struct {
@@ -57,6 +67,19 @@ func (c *greetingServiceClient) SayHello(ctx context.Context, in *HelloRequest, 
 	return out, nil
 }
 
+func (c *greetingServiceClient) Chat(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[ChatMessage, ChatMessage], error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	stream, err := c.cc.NewStream(ctx, &GreetingService_ServiceDesc.Streams[0], GreetingService_Chat_FullMethodName, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	x := &grpc.GenericClientStream[ChatMessage, ChatMessage]{ClientStream: stream}
+	return x, nil
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreetingService_ChatClient = grpc.BidiStreamingClient[ChatMessage, ChatMessage]
+
 // GreetingServiceServer is the server API for GreetingService service.
 // All implementations must embed UnimplementedGreetingServiceServer
 // for forward compatibility.
@@ -64,10 +87,19 @@ func (c *greetingServiceClient) SayHello(ctx context.Context, in *HelloRequest, 
 // 定義 gRPC 服務 (Service)
 // 服務代表兩端系統之間可以互相呼叫的 API 介面
 type GreetingServiceServer interface {
-	// 定義一個單向 RPC (Unary RPC) 方法：
-	// 用戶端 (Service A) 發送一個 HelloRequest 請求，
-	// 服務端 (Service B) 處理後回傳一個 HelloResponse 回應。
+	// 1. 單向 RPC (Unary RPC)：
+	// 用戶端 (Service A) 發送一次請求，服務端 (Service B) 回傳一次回應（傳統 Request-Response 模式）
 	SayHello(context.Context, *HelloRequest) (*HelloResponse, error)
+	// 2. 雙向串流 RPC (Bidirectional Streaming RPC)：
+	// 關鍵字「stream」同時出現在請求與回應參數中：
+	// 代表 Client 與 Server 可以在同一個長連線上，非同步、互相獨立地發送多筆訊息！
+	//
+	// 💡 實際應用場景：
+	// - 即時多人聊天室 / 協同編輯 (如 Google Docs、Figma 即時光標與輸入同步)
+	// - 語音 AI / 語音串流全雙工對話 (如邊錄音邊串流傳送音訊，AI 邊辨識邊即時回傳文字或合成語音)
+	// - 物聯網 (IoT) 即時遙測與反向控制 (邊緣設備持續上報感測器數據，伺服器隨時下發控制指令)
+	// - 金融即時高頻撮合交易 (一端即時訂閱報價深度，另一端隨時發送下單與撤單指令)
+	Chat(grpc.BidiStreamingServer[ChatMessage, ChatMessage]) error
 	mustEmbedUnimplementedGreetingServiceServer()
 }
 
@@ -80,6 +112,9 @@ type UnimplementedGreetingServiceServer struct{}
 
 func (UnimplementedGreetingServiceServer) SayHello(context.Context, *HelloRequest) (*HelloResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method SayHello not implemented")
+}
+func (UnimplementedGreetingServiceServer) Chat(grpc.BidiStreamingServer[ChatMessage, ChatMessage]) error {
+	return status.Error(codes.Unimplemented, "method Chat not implemented")
 }
 func (UnimplementedGreetingServiceServer) mustEmbedUnimplementedGreetingServiceServer() {}
 func (UnimplementedGreetingServiceServer) testEmbeddedByValue()                         {}
@@ -120,6 +155,13 @@ func _GreetingService_SayHello_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _GreetingService_Chat_Handler(srv interface{}, stream grpc.ServerStream) error {
+	return srv.(GreetingServiceServer).Chat(&grpc.GenericServerStream[ChatMessage, ChatMessage]{ServerStream: stream})
+}
+
+// This type alias is provided for backwards compatibility with existing code that references the prior non-generic stream type by name.
+type GreetingService_ChatServer = grpc.BidiStreamingServer[ChatMessage, ChatMessage]
+
 // GreetingService_ServiceDesc is the grpc.ServiceDesc for GreetingService service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -132,6 +174,13 @@ var GreetingService_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _GreetingService_SayHello_Handler,
 		},
 	},
-	Streams:  []grpc.StreamDesc{},
+	Streams: []grpc.StreamDesc{
+		{
+			StreamName:    "Chat",
+			Handler:       _GreetingService_Chat_Handler,
+			ServerStreams: true,
+			ClientStreams: true,
+		},
+	},
 	Metadata: "proto/greeting.proto",
 }
