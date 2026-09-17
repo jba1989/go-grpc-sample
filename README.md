@@ -5,13 +5,14 @@
 ---
 
 ## 📖 目錄
-1. [系統通訊流程圖 (Sequence & Flowchart)](#系統通訊流程圖)
-2. [專案目錄結構](#專案目錄結構)
-3. [核心概念解析](#核心概念解析)
-4. [新手常見疑問與實務架構 (FAQ)](#新手常見疑問與實務架構-faq)
-5. [環境需求與準備](#環境需求與準備)
-6. [步驟詳解：從零打造 gRPC 服務](#步驟詳解從零打造-grpc-服務)
-7. [快速執行與測試](#快速執行與測試)
+1. [單向通訊流程圖 (Unary RPC)](#單向通訊流程圖-unary-rpc)
+2. [雙向串流通訊與實務情境 (Bidirectional Streaming)](#雙向串流通訊與實務情境-bidirectional-streaming)
+3. [專案目錄結構](#專案目錄結構)
+4. [核心概念解析](#核心概念解析)
+5. [新手常見疑問與實務架構 (FAQ)](#新手常見疑問與實務架構-faq)
+6. [環境需求與準備](#環境需求與準備)
+7. [步驟詳解：從零打造 gRPC 服務](#步驟詳解從零打造-grpc-服務)
+8. [快速執行與測試](#快速執行與測試)
 
 ---
 
@@ -71,6 +72,87 @@ flowchart TD
         B3 -->|回傳 HelloResponse| B2
     end
 ```
+
+---
+
+## 🔄 雙向串流通訊與實務情境 (Bidirectional Streaming)
+
+在標準的單向 RPC (Unary RPC) 中，通訊是一問一答（Request -> Response）的阻塞模式。而在 **雙向串流 (Bidirectional Streaming RPC)** 中，Client 與 Server 可以在同一個 HTTP/2 長連線上，**完全非同步、獨立地同時收發多筆訊息**（真正的全雙工 Full-Duplex 通訊）！
+
+### 1. 雙向串流通訊循序圖 (Sequence Diagram)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A_Main as Service A (主執行緒)
+    participant A_Recv as Service A (背景接收協程)
+    participant Stream as HTTP/2 雙向通道 (Stream)
+    participant B_Server as Service B (服務端 Handler)
+
+    Note over A_Main,B_Server: 步驟一：開啟雙向串流通道
+    A_Main->>Stream: 1. client.Chat(ctx) 取得 stream 物件
+    Stream->>B_Server: 2. 觸發 server.Chat(stream) Handler
+
+    Note over A_Recv,B_Server: 步驟二：啟動全雙工收發架構
+    A_Main->>A_Recv: 3. go func() 啟動獨立 Goroutine 監聽 stream.Recv()
+    
+    Note over A_Main,B_Server: 步驟三：非同步交錯收發資料
+    A_Main->>Stream: 4. stream.Send(訊息 1: 請求連線)
+    Stream->>B_Server: 傳送訊息 1
+    B_Server->>Stream: 5. stream.Send(回應 1: ACK 收到)
+    Stream->>A_Recv: 接收回應 1
+
+    A_Main->>Stream: 6. stream.Send(訊息 2: 即時遙測數據)
+    Stream->>B_Server: 傳送訊息 2
+    B_Server->>Stream: 7. stream.Send(回應 2: 處理成功)
+    Stream->>A_Recv: 接收回應 2
+
+    Note over A_Main,B_Server: 步驟四：優雅半關閉與通道終止
+    A_Main->>Stream: 8. stream.CloseSend() (Client 宣布停止發送)
+    Stream->>B_Server: 9. 收到 io.EOF (Client 訊息已結束)
+    B_Server-->>Stream: 10. Server 結束 handler，關閉伺服端發送
+    Stream-->>A_Recv: 11. 收到 io.EOF (Server 也關閉發送)
+    A_Recv->>A_Main: 12. close(waitc) 通知主線程，完成全雙工對話！
+```
+
+---
+
+### 2. 💡 實際生活與商業系統中，雙向串流用在哪裡？
+
+雙向串流是現代高併發、極致低延遲架構的殺手級武器，以下是 5 大最經典的真實落地商業情境：
+
+#### 🌟 情境 1：即時語音 / 影像 AI 全雙工對話 (Realtime Voice & Multimodal AI)
+* **典型案例**：OpenAI Realtime API、Google Gemini Live API、智慧語音助理。
+* **為什麼非用雙向串流不可**：
+  * 用戶對著麥克風說話時，音訊切片（Audio Chunks）被持續不斷地透過 `stream.Send()` 串流傳至伺服器。
+  * 伺服器一邊進行語音識別（ASR）、一邊透過 LLM 進行語意推理，不必等整段話講完，就立即透過同一個通道將文字 Token 與合成語音 (TTS) 即時推播回用戶耳機。
+  * **支援隨時插話打斷 (Interruption)**：當用戶在 AI 說話途中突然開口打斷，Client 能在同一通道立即發送中斷訊號，Server 瞬間停止前一次的語音合成並重新聆聽，達到如同真人般的自然對談！
+
+#### 🌟 情境 2：線上即時多人協同編輯 (Real-time Collaborative Apps)
+* **典型案例**：Figma、Google Docs、線上協同白板 (Miro)。
+* **為什麼非用雙向串流不可**：
+  * 多個使用者同時在同一張畫布上操作。每個使用者的游標座標移動、文字鍵入、物件拖曳等細微動作（CRDT 或 OT 演算法增量資料），以每秒數十次的高頻率透過 Client Stream 發給伺服器。
+  * 伺服器同時接收多端的操作流，完成版本仲裁後，即時將合併後的畫布最新狀態反推回所有在線的協作者視窗。
+
+#### 🌟 情境 3：物聯網 (IoT) 邊緣遙測與即時反向控制 (IoT Telemetry & Remote Control)
+* **典型案例**：智慧車聯網 (自駕車)、無人機飛控、智慧工廠機械手臂。
+* **為什麼非用雙向串流不可**：
+  * 邊緣設備持續以串流向上呈報即時遙測數據（GPS 位置、發動機溫度、轉速、電池電壓）。
+  * 雲端控制中心進行即時安全監控：一旦雲端演算法判定數值異常（例如車輛即將偏離或機械過熱），**無須耗費時間重新交握建立 TCP 連線**，直接在原有的雙向通道上「反向」下發緊急減速或斷電停機指令。
+
+#### 🌟 情境 4：金融高頻行情訂閱與撮合交易 (Financial High-Frequency Trading)
+* **典型案例**：加密貨幣交易所 (Binance、Coinbase)、期貨證券高頻量化撮合系統。
+* **為什麼非用雙向串流不可**：
+  * 量化交易機器人與撮合引擎保持單一 gRPC 雙向串流：
+    * Server 端毫秒不差地將 Level 2 深度報價 (Order Book Ticks) 串流推播給客戶端。
+    * 機器人一偵測到套利空間，同一微秒內在同一個串流中將限價單 (Limit Order) 灌入交易所，省去傳統 HTTP 連線重複建立的握手與協商延遲。
+
+#### 🌟 情境 5：巨型檔案斷點分塊傳輸與即時 ACK 校驗 (Chunked File Sync)
+* **典型案例**：大型雲端備份、媒體影片上傳。
+* **為什麼非用雙向串流不可**：
+  * Client 將 20GB 的巨型影片切分成 4MB 的小塊（Chunks）陸續上傳。
+  * Server 每寫入一個 Chunk，就即時回推一個校驗雜湊值 (Hash ACK) 與伺服器寫入進度。
+  * 若第 50 個區塊傳輸校驗出錯，Server 立即告知 Client 重新發送該區塊，而不用等整部 20GB 傳完才發現損壞全部重來。
 
 ---
 
@@ -286,18 +368,39 @@ go run server/main.go
 ```bash
 go run client/main.go
 ```
-*預期輸出：*
+*預期輸出（單向 + 雙向串流展示）：*
 ```text
-2026/09/17 21:29:20 🚀 [Service A] 正在初始化 gRPC 用戶端...
-2026/09/17 21:29:20 📤 [Service A] 準備發送 RPC 請求 -> 目標: localhost:50051
-2026/09/17 21:29:20    發送內容: Name=[Service A (用戶端)], Message=[你好 Service B，我是 Service A，我們已透過 gRPC 成功連線！]
-2026/09/17 21:29:20 📥 [Service A] 成功收到 Service B 的回應！
-2026/09/17 21:29:20    回應訊息 (Reply): 你好 Service A (用戶端)！我是 Service B，我已經收到你的訊息：「你好 Service B，我是 Service A，我們已透過 gRPC 成功連線！」
-2026/09/17 21:29:20    處理時間 (Timestamp): 2026-09-17 21:29:20 (Unix: 1789651760)
+2026/09/17 22:52:13 🚀 [Service A] 正在初始化 gRPC 用戶端...
+
+--- 【展示一：單向 RPC 呼叫 (Unary RPC)】---
+2026/09/17 22:52:13 📥 [Service A] 收到單向回應: 你好 Service A (用戶端)！我是 Service B，我已經收到你的訊息：「你好 Service B，這是單向 Hello 測試！」
+
+--- 【展示二：雙向串流 RPC (Bidirectional Streaming)】---
+💡 雙向串流特點：Client 與 Server 可以在同一個 HTTP/2 連線上，同時、非同步地相互收發訊息！
+2026/09/17 22:52:13 📤 [Service A Stream 發送中] [Seq #1] 第一封：請求建立雙向即時資料串流管道
+2026/09/17 22:52:13 📥 [Service A Stream 收到回推] 來源: [Service B (服務端)] -> 訊息: 「Service B 已收到你的第 [Seq #1] 第一封：請求建立雙向即時資料串流管道 號訊號！」
+2026/09/17 22:52:14 📤 [Service A Stream 發送中] [Seq #2] 第二封：即時遙測數據回報 -> CPU負載正常、記憶體使用量 32%
+2026/09/17 22:52:14 📥 [Service A Stream 收到回推] 來源: [Service B (服務端)] -> 訊息: 「Service B 已收到你的第 [Seq #2] 第二封：即時遙測數據回報 -> CPU負載正常、記憶體使用量 32% 號訊號！」
+2026/09/17 22:52:14 📤 [Service A Stream 發送中] [Seq #3] 第三封：心跳偵測訊號 (Heartbeat Ping)
+2026/09/17 22:52:14 📥 [Service A Stream 收到回推] 來源: [Service B (服務端)] -> 訊息: 「Service B 已收到你的第 [Seq #3] 第三封：心跳偵測訊號 (Heartbeat Ping) 號訊號！」
+2026/09/17 22:52:15 📤 [Service A Stream 發送中] [Seq #4] 第四封：本日所有事件已同步完成，準備道別！
+2026/09/17 22:52:15 📥 [Service A Stream 收到回推] 來源: [Service B (服務端)] -> 訊息: 「Service B 已收到你的第 [Seq #4] 第四封：本日所有事件已同步完成，準備道別！ 號訊號！」
+2026/09/17 22:52:16 🚪 [Service A Stream] 本端發送完畢，呼叫 CloseSend() 半關閉連線...
+2026/09/17 22:52:16 👋 [Service A Stream] 服務端已關閉串流 (收到 io.EOF)
+2026/09/17 22:52:16 ✅ [Service A Stream] 雙向串流通訊順利圓滿結束！
 ```
 
-同時，在**終端機視窗 1 (Service B)** 會印出接收到的日誌：
+同時，在**終端機視窗 1 (Service B)** 會印出接收到的即時日誌：
 ```text
-2026/09/17 21:29:20 📥 [Service B] 收到請求 -> 來源名稱: [Service A (用戶端)], 附加訊息: [你好 Service B，我是 Service A，我們已透過 gRPC 成功連線！]
-2026/09/17 21:29:20 📤 [Service B] 回傳回應 -> 回應內容: [你好 Service A (用戶端)！我是 Service B，我已經收到你的訊息：「你好 Service B，我是 Service A，我們已透過 gRPC 成功連線！」]
+2026/09/17 22:52:13 📥 [Service B Unary] 收到請求 -> 來源: [Service A (用戶端)], 訊息: [你好 Service B，這是單向 Hello 測試！]
+2026/09/17 22:52:13 🔄 [Service B Stream] 雙向串流通道已建立，準備接收訊息...
+2026/09/17 22:52:13 📥 [Service B Stream] 收到來自 [Service A (用戶端)] 的串流訊息: 「[Seq #1] 第一封：請求建立雙向即時資料串流管道」
+2026/09/17 22:52:13 📤 [Service B Stream] 已即時回推回應給用戶端: [Service B 已收到你的第 [Seq #1] 第一封：請求建立雙向即時資料串流管道 號訊號！]
+2026/09/17 22:52:14 📥 [Service B Stream] 收到來自 [Service A (用戶端)] 的串流訊息: 「[Seq #2] 第二封：即時遙測數據回報 -> CPU負載正常、記憶體使用量 32%」
+2026/09/17 22:52:14 📤 [Service B Stream] 已即時回推回應給用戶端: [Service B 已收到你的第 [Seq #2] 第二封：即時遙測數據回報 -> CPU負載正常、記憶體使用量 32% 號訊號！]
+2026/09/17 22:52:14 📥 [Service B Stream] 收到來自 [Service A (用戶端)] 的串流訊息: 「[Seq #3] 第三封：心跳偵測訊號 (Heartbeat Ping)」
+2026/09/17 22:52:14 📤 [Service B Stream] 已即時回推回應給用戶端: [Service B 已收到你的第 [Seq #3] 第三封：心跳偵測訊號 (Heartbeat Ping) 號訊號！]
+2026/09/17 22:52:15 📥 [Service B Stream] 收到來自 [Service A (用戶端)] 的串流訊息: 「[Seq #4] 第四封：本日所有事件已同步完成，準備道別！」
+2026/09/17 22:52:15 📤 [Service B Stream] 已即時回推回應給用戶端: [Service B 已收到你的第 [Seq #4] 第四封：本日所有事件已同步完成，準備道別！ 號訊號！]
+2026/09/17 22:52:16 👋 [Service B Stream] 用戶端已結束傳輸 (收到 io.EOF)，關閉本次串流連線。
 ```
